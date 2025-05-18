@@ -19,7 +19,7 @@ class TimeSlider(QSlider):
         
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # 计算点击位置对应的值
+            # Calculate the value corresponding to the clicked position
             pos = event.pos().x()
             slider_width = self.width()
             value = int((pos / slider_width) * self.maximum())
@@ -35,16 +35,16 @@ class SegmentWidget(QWidget):
         
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(5)  # 减小布局间距
-        layout.setContentsMargins(5, 5, 5, 5)  # 减小边距
+        layout.setSpacing(5)  # Reduce layout spacing
+        layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
         
-        # 时间轴容器
+        # Timeline container
         timeline_container = QWidget()
         timeline_layout = QVBoxLayout(timeline_container)
-        timeline_layout.setSpacing(2)  # 减小时间轴布局间距
+        timeline_layout.setSpacing(2)  # Reduce timeline layout spacing
         
-        # 开始帧时间轴
-        begin_layout = QHBoxLayout()  # 改为水平布局
+        # Begin timeline
+        begin_layout = QHBoxLayout()  # Changed to horizontal layout
         begin_layout.setSpacing(5)
         begin_label = QLabel("Begin:")
         begin_label.setFixedWidth(50)
@@ -77,8 +77,8 @@ class SegmentWidget(QWidget):
         
         timeline_layout.addLayout(begin_layout)
         
-        # 结束帧时间轴
-        end_layout = QHBoxLayout()  # 改为水平布局
+        # End timeline
+        end_layout = QHBoxLayout()  # Changed to horizontal layout
         end_layout.setSpacing(5)
         end_label = QLabel("End:")
         end_label.setFixedWidth(50)
@@ -112,12 +112,12 @@ class SegmentWidget(QWidget):
         timeline_layout.addLayout(end_layout)
         layout.addWidget(timeline_container)
         
-        # 按钮
+        # Buttons
         button_layout = QHBoxLayout()
         button_layout.setSpacing(10)
         self.confirm_btn = QPushButton("Confirm")
         self.cancel_btn = QPushButton("Cancel")
-        self.confirm_btn.setFixedHeight(30)  # 减小按钮高度
+        self.confirm_btn.setFixedHeight(30)  # Reduce button height
         self.cancel_btn.setFixedHeight(30)
         self.confirm_btn.clicked.connect(self.confirm_selection)
         self.cancel_btn.clicked.connect(self.cancel_selection)
@@ -252,13 +252,209 @@ class SegmentWidget(QWidget):
         if self.parent:
             self.parent.cancel_segment()
 
+class ClipWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)  # Make it a window
+        self.parent = parent
+        self.init_ui()
+        
+        # Crop area related variables
+        self.crop_rect = None  # Crop rectangle area
+        self.dragging_corner = None  # Currently dragging corner
+        self.corner_size = 40  # Increased corner size
+        self.original_frame = None  # Original frame
+        self.display_frame = None  # Display frame
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Video display area
+        self.video_label = QLabel()
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setMinimumSize(640, 480)
+        self.video_label.setStyleSheet("""
+            QLabel {
+                background-color: black;
+                border: 2px solid #666;
+                border-radius: 5px;
+            }
+        """)
+        layout.addWidget(self.video_label)
+        
+        # Button area
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        self.confirm_btn = QPushButton("Confirm")
+        self.cancel_btn = QPushButton("Cancel")
+        self.confirm_btn.setFixedHeight(30)
+        self.cancel_btn.setFixedHeight(30)
+        
+        self.confirm_btn.clicked.connect(self.confirm_clip)
+        self.cancel_btn.clicked.connect(self.cancel_clip)
+        
+        button_layout.addWidget(self.confirm_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+        
+    def showEvent(self, event):
+        # Position the window to match parent window
+        if self.parent:
+            self.setGeometry(self.parent.geometry())
+        super().showEvent(event)
+
+    def set_frame(self, frame):
+        if frame is None:
+            return
+            
+        self.original_frame = frame.copy()
+        self.display_frame = frame.copy()
+        
+        # Initialize crop area to full frame
+        h, w = frame.shape[:2]
+        self.crop_rect = [0, 0, w, h]  # [x1, y1, x2, y2]
+        
+        self.update_display()
+        
+    def update_display(self):
+        if self.original_frame is None:
+            return
+            
+        # Create a copy of the display frame
+        display = self.original_frame.copy()
+        
+        # Create semi-transparent mask
+        mask = np.zeros_like(display)
+        mask[:] = (128, 128, 128)  # Gray background
+        
+        # Draw crop area
+        x1, y1, x2, y2 = self.crop_rect
+        mask[y1:y2, x1:x2] = (255, 200, 200)  # Lighter red area
+        
+        # Merge original frame and mask
+        alpha = 0.3  # More transparent
+        display = cv2.addWeighted(display, 1, mask, alpha, 0)
+        
+        # Draw crop frame
+        cv2.rectangle(display, (x1, y1), (x2, y2), (255, 255, 255), 2)
+        
+        # Draw four corners with larger circles
+        corners = [(x1, y1), (x2, y1), (x1, y2), (x2, y2)]
+        for corner in corners:
+            # Draw outer circle
+            cv2.circle(display, corner, self.corner_size, (255, 255, 255), -1)
+            # Draw inner circle
+            cv2.circle(display, corner, self.corner_size - 2, (0, 0, 0), 1)
+        
+        # Convert to QImage and display
+        h, w, ch = display.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(display.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        self.video_label.setPixmap(QPixmap.fromImage(qt_image).scaled(
+            self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
+    def mousePressEvent(self, event):
+        if self.original_frame is None:
+            return
+            
+        pos = event.pos()
+        label_pos = self.video_label.mapFrom(self, pos)
+        
+        # Get the actual image position from the video label
+        pixmap = self.video_label.pixmap()
+        if pixmap is None:
+            return
+            
+        # Calculate the actual position in the label
+        scaled_size = pixmap.size()
+        label_size = self.video_label.size()
+        x_offset = (label_size.width() - scaled_size.width()) // 2
+        y_offset = (label_size.height() - scaled_size.height()) // 2
+        
+        # Convert to image coordinates
+        img_x = int((label_pos.x() - x_offset) * self.original_frame.shape[1] / scaled_size.width())
+        img_y = int((label_pos.y() - y_offset) * self.original_frame.shape[0] / scaled_size.height())
+        
+        # Check if clicked corner
+        corners = [(self.crop_rect[0], self.crop_rect[1]),  # Top left
+                  (self.crop_rect[2], self.crop_rect[1]),  # Top right
+                  (self.crop_rect[0], self.crop_rect[3]),  # Bottom left
+                  (self.crop_rect[2], self.crop_rect[3])]  # Bottom right
+        
+        for i, corner in enumerate(corners):
+            if abs(img_x - corner[0]) <= self.corner_size and abs(img_y - corner[1]) <= self.corner_size:
+                self.dragging_corner = i
+                break
+                
+    def mouseMoveEvent(self, event):
+        if self.dragging_corner is None or self.original_frame is None:
+            return
+            
+        pos = event.pos()
+        label_pos = self.video_label.mapFrom(self, pos)
+        
+        # Get the actual image position from the video label
+        pixmap = self.video_label.pixmap()
+        if pixmap is None:
+            return
+            
+        # Calculate the actual position in the label
+        scaled_size = pixmap.size()
+        label_size = self.video_label.size()
+        x_offset = (label_size.width() - scaled_size.width()) // 2
+        y_offset = (label_size.height() - scaled_size.height()) // 2
+        
+        # Convert to image coordinates
+        img_x = int((label_pos.x() - x_offset) * self.original_frame.shape[1] / scaled_size.width())
+        img_y = int((label_pos.y() - y_offset) * self.original_frame.shape[0] / scaled_size.height())
+        
+        # Limit coordinates to image range
+        img_x = max(0, min(img_x, self.original_frame.shape[1]))
+        img_y = max(0, min(img_y, self.original_frame.shape[0]))
+        
+        # Update crop area
+        if self.dragging_corner == 0:  # Top left
+            self.crop_rect[0] = img_x
+            self.crop_rect[1] = img_y
+        elif self.dragging_corner == 1:  # Top right
+            self.crop_rect[2] = img_x
+            self.crop_rect[1] = img_y
+        elif self.dragging_corner == 2:  # Bottom left
+            self.crop_rect[0] = img_x
+            self.crop_rect[3] = img_y
+        elif self.dragging_corner == 3:  # Bottom right
+            self.crop_rect[2] = img_x
+            self.crop_rect[3] = img_y
+            
+        # Ensure top left corner is above bottom right corner
+        self.crop_rect[0] = min(self.crop_rect[0], self.crop_rect[2])
+        self.crop_rect[1] = min(self.crop_rect[1], self.crop_rect[3])
+        self.crop_rect[2] = max(self.crop_rect[0], self.crop_rect[2])
+        self.crop_rect[3] = max(self.crop_rect[1], self.crop_rect[3])
+        
+        self.update_display()
+        
+    def mouseReleaseEvent(self, event):
+        self.dragging_corner = None
+        
+    def confirm_clip(self):
+        if self.parent and self.crop_rect:
+            x1, y1, x2, y2 = self.crop_rect
+            self.parent.confirm_clip(x1, y1, x2, y2)
+            
+    def cancel_clip(self):
+        if self.parent:
+            self.parent.cancel_clip()
+
 class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Video Processing Tool")
         self.setGeometry(100, 100, 1280, 720)
         
-        # 初始化变量
+        # Initialize variables
         self.cap = None
         self.current_frame = None
         self.is_playing = False
@@ -270,26 +466,28 @@ class VideoPlayer(QMainWindow):
         self.segment_end = 0
         self.input_file = ""
         self.is_processing = False
+        self.clip_rect = None  # Crop area
+        self.clip_widget = None  # Will be created when needed
         
-        # 创建UI
+        # Create UI
         self.init_ui()
         
-        # 设置定时器
+        # Set up timer
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         
     def init_ui(self):
-        # 创建工具栏
+        # Create toolbar
         self.create_toolbar()
         
-        # 创建中央部件
+        # Create central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # 主布局
+        # Main layout
         main_layout = QVBoxLayout(central_widget)
         
-        # 视频显示区域
+        # Video display area
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setMinimumSize(640, 480)
@@ -303,104 +501,103 @@ class VideoPlayer(QMainWindow):
                 border: 2px dashed #999;
             }
         """)
-        self.video_label.setText("Drag and drop video file here\nor click to open file")
+        self.video_label.setText("Drag and drop video file here")
         self.video_label.setStyleSheet(self.video_label.styleSheet() + """
             QLabel {
                 color: #666;
                 font-size: 16px;
             }
         """)
-        self.video_label.mousePressEvent = self.open_file_dialog
         main_layout.addWidget(self.video_label)
         
-        # 创建堆叠部件
+        # Create stacked widget
         self.stacked_widget = QStackedWidget()
         
-        # 创建默认控制界面
+        # Create default control interface
         default_widget = QWidget()
         default_layout = QVBoxLayout(default_widget)
         
-        # 播放控制区域
+        # Playback control area
         play_controls = QHBoxLayout()
         
-        # 播放/暂停按钮
+        # Play/Pause button
         self.play_button = QPushButton()
         self.play_button.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.play_button.clicked.connect(self.toggle_play)
-        self.play_button.setEnabled(False)  # 初始禁用
+        self.play_button.setEnabled(False)  # Initially disabled
         play_controls.addWidget(self.play_button)
         
-        # 时间滑块
+        # Time slider
         self.time_slider = TimeSlider(Qt.Horizontal)
         self.time_slider.sliderPressed.connect(self.slider_pressed)
         self.time_slider.sliderReleased.connect(self.slider_released)
         self.time_slider.valueChanged.connect(self.slider_value_changed)
         self.time_slider.clicked.connect(self.time_slider_clicked)
-        self.time_slider.setEnabled(False)  # 初始禁用
+        self.time_slider.setEnabled(False)  # Initially disabled
         play_controls.addWidget(self.time_slider)
         
-        # 时间标签
+        # Time label
         self.time_label = QLabel("00:00 / 00:00")
         play_controls.addWidget(self.time_label)
         
         default_layout.addLayout(play_controls)
         
-        # 保存控制区域
+        # Save control area
         save_controls = QHBoxLayout()
         
-        # 保存格式选择
+        # Save format selection
         self.save_format = QComboBox()
         self.save_format.addItems([".mp4", ".avi", ".mkv", ".jpg", ".png"])
         self.save_format.setFixedHeight(40)
-        self.save_format.setEnabled(False)  # 初始禁用
+        self.save_format.setEnabled(False)  # Initially disabled
         save_controls.addWidget(self.save_format)
         
-        # 保存按钮
+        # Save button
         self.save_button = QPushButton("Save")
         self.save_button.setFixedHeight(40)
         self.save_button.clicked.connect(self.save_current)
-        self.save_button.setEnabled(False)  # 初始禁用
+        self.save_button.setEnabled(False)  # Initially disabled
         save_controls.addWidget(self.save_button)
         
         default_layout.addLayout(save_controls)
         
-        # 创建Segment界面
+        # Create Segment interface
         self.segment_widget = SegmentWidget(self)
         
-        # 添加界面到堆叠部件
+        # Add interfaces to stacked widget
         self.stacked_widget.addWidget(default_widget)
         self.stacked_widget.addWidget(self.segment_widget)
         
         main_layout.addWidget(self.stacked_widget)
         
-        # 设置拖放
+        # Enable drag and drop
         self.setAcceptDrops(True)
         
     def create_toolbar(self):
         toolbar = QToolBar()
         self.addToolBar(toolbar)
         
-        # 文件打开按钮
+        # File open button
         open_action = QAction("Open", self)
         open_action.triggered.connect(self.open_file_dialog)
         toolbar.addAction(open_action)
         
-        # Segment 功能
+        # Segment function
         segment_action = QAction("Segment", self)
         segment_action.triggered.connect(self.toggle_segment_mode)
         toolbar.addAction(segment_action)
         
-        # Clip 功能
+        # Clip function
         clip_action = QAction("Clip", self)
         clip_action.triggered.connect(self.start_clip_mode)
         toolbar.addAction(clip_action)
         
-        # Resize 功能
+        # Resize function
         resize_action = QAction("Resize", self)
         resize_action.triggered.connect(self.show_resize_dialog)
         toolbar.addAction(resize_action)
         
-        # Speed 功能
+        # Speed function
         speed_action = QAction("Speed", self)
         speed_action.triggered.connect(self.show_speed_dialog)
         toolbar.addAction(speed_action)
@@ -455,7 +652,7 @@ class VideoPlayer(QMainWindow):
                 
     def time_slider_clicked(self, value):
         if self.time_slider.orientation() == Qt.Horizontal:
-            # 设置新的位置
+            # Set new position
             self.time_slider.setValue(value)
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, value)
             ret, frame = self.cap.read()
@@ -482,8 +679,6 @@ class VideoPlayer(QMainWindow):
             if format in ['.jpg', '.png']:
                 # Save single frame
                 save_path = os.path.join(base_path, f"{self.current_frame_number:06d}{format}")
-                # frame_rgb = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-                # 使用numpy保存图片，避免中文路径问题
                 cv2.imencode(format, self.current_frame)[1].tofile(save_path)
             else:
                 save_path = os.path.join(base_path, f"{self.segment_begin:06d}-{self.segment_end:06d}{format}")
@@ -502,6 +697,12 @@ class VideoPlayer(QMainWindow):
             width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             
+            # Apply crop if exists
+            if self.clip_rect:
+                x1, y1, x2, y2 = self.clip_rect
+                width = x2 - x1
+                height = y2 - y1
+            
             # Create video writer
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(save_path, fourcc, self.fps, (width, height))
@@ -516,6 +717,10 @@ class VideoPlayer(QMainWindow):
             for _ in range(self.segment_begin, self.segment_end):
                 ret, frame = self.cap.read()
                 if ret:
+                    # Apply crop if exists
+                    if self.clip_rect:
+                        x1, y1, x2, y2 = self.clip_rect
+                        frame = frame[y1:y2, x1:x2]
                     out.write(frame)
                 else:
                     break
@@ -527,17 +732,25 @@ class VideoPlayer(QMainWindow):
             raise e
             
     def update_display(self, frame):
-        # 转换颜色空间从BGR到RGB
+        if frame is None:
+            return
+            
+        # Apply crop
+        if self.clip_rect:
+            x1, y1, x2, y2 = self.clip_rect
+            frame = frame[y1:y2, x1:x2]
+            
+        # Convert color space from BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
         bytes_per_line = ch * w
         
-        # 转换为QImage并显示
+        # Convert to QImage and display
         qt_image = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image).scaled(
             self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             
-        # 更新时间标签
+        # Update time label
         current_time = self.current_frame_number / self.fps
         total_time = self.segment_end / self.fps
         self.time_label.setText(f"{int(current_time//60):02d}:{int(current_time%60):02d} / "
@@ -570,7 +783,7 @@ class VideoPlayer(QMainWindow):
             "border: 2px dashed #666;"
         ))
             
-    def open_file_dialog(self, event):
+    def open_file_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Video File",
@@ -656,7 +869,7 @@ class VideoPlayer(QMainWindow):
             self.current_frame_number = int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
             self.time_slider.setValue(self.current_frame_number)
             
-            # 检查是否达到片段结束位置
+            # Check if reached segment end
             if self.current_frame_number >= self.segment_end:
                 self.pause_video()
                 self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.segment_begin)
@@ -685,7 +898,28 @@ class VideoPlayer(QMainWindow):
             self.save_button.setEnabled(False)
 
     def start_clip_mode(self):
-        QMessageBox.information(self, "Info", "Clip mode will be implemented in the next step.")
+        if not self.cap:
+            QMessageBox.warning(self, "Warning", "Please load a video first!")
+            return
+            
+        # Create clip widget if not exists
+        if self.clip_widget is None:
+            self.clip_widget = ClipWidget(self)
+            
+        self.clip_widget.set_frame(self.current_frame)
+        self.clip_widget.show()
+        self.pause_video()
+        
+    def confirm_clip(self, x1, y1, x2, y2):
+        self.clip_rect = (x1, y1, x2, y2)
+        if self.clip_widget:
+            self.clip_widget.close()
+        self.play_video()
+        
+    def cancel_clip(self):
+        if self.clip_widget:
+            self.clip_widget.close()
+        self.play_video()
         
     def show_resize_dialog(self):
         QMessageBox.information(self, "Info", "Resize dialog will be implemented in the next step.")
