@@ -543,6 +543,83 @@ class ResizeWidget(QWidget):
         self.resize_widget.show()
         self.pause_video()
 
+class SpeedWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent
+        self.init_ui()
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Speed slider
+        speed_layout = QHBoxLayout()
+        speed_layout.setSpacing(5)
+        
+        speed_label = QLabel("Speed:")
+        speed_label.setFixedWidth(50)
+        speed_layout.addWidget(speed_label)
+        
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(1, 100)  # 0.1-10.0, multiplied by 10 for integer slider
+        self.speed_slider.setValue(10)  # Default to 1.0
+        self.speed_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #999999;
+                height: 8px;
+                background: #666666;
+                margin: 2px 0;
+            }
+            QSlider::handle:horizontal {
+                background: #2196F3;
+                border: 1px solid #2196F3;
+                width: 18px;
+                margin: -2px 0;
+                border-radius: 3px;
+            }
+        """)
+        self.speed_slider.valueChanged.connect(self.speed_changed)
+        speed_layout.addWidget(self.speed_slider)
+        
+        self.speed_input = QLineEdit()
+        self.speed_input.setFixedWidth(80)
+        self.speed_input.setText("1.0")
+        self.speed_input.setReadOnly(True)
+        speed_layout.addWidget(self.speed_input)
+        
+        layout.addLayout(speed_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        self.confirm_btn = QPushButton("Confirm")
+        self.cancel_btn = QPushButton("Cancel")
+        self.confirm_btn.setFixedHeight(30)
+        self.cancel_btn.setFixedHeight(30)
+        
+        self.confirm_btn.clicked.connect(self.confirm_speed)
+        self.cancel_btn.clicked.connect(self.cancel_speed)
+        
+        button_layout.addWidget(self.confirm_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+        
+    def speed_changed(self, value):
+        speed = value / 10.0
+        self.speed_input.setText(f"{speed:.1f}")
+        
+    def confirm_speed(self):
+        if self.parent:
+            speed = float(self.speed_input.text())
+            self.parent.confirm_speed(speed)
+            
+    def cancel_speed(self):
+        if self.parent:
+            self.parent.cancel_speed()
+
 class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -566,6 +643,9 @@ class VideoPlayer(QMainWindow):
         self.resize_widget = None  # Will be created when needed
         self.resize_dimensions = None  # (width, height)
         self.last_resize_dimensions = None  # Store last resize dimensions
+        self.speed_widget = None  # Will be created when needed
+        self.playback_speed = 1.0  # Current playback speed
+        self.original_fps = 0  # Store original FPS
         
         # Create UI
         self.init_ui()
@@ -639,6 +719,67 @@ class VideoPlayer(QMainWindow):
         play_controls.addWidget(self.time_label)
         
         default_layout.addLayout(play_controls)
+        
+        # Speed control area (initially hidden)
+        self.speed_control = QWidget()
+        speed_layout = QVBoxLayout(self.speed_control)
+        speed_layout.setSpacing(5)
+        
+        # Speed slider area
+        slider_layout = QHBoxLayout()
+        slider_layout.setSpacing(5)
+        
+        speed_label = QLabel("Speed:")
+        speed_label.setFixedWidth(50)
+        slider_layout.addWidget(speed_label)
+        
+        self.speed_slider = QSlider(Qt.Horizontal)
+        self.speed_slider.setRange(0, 100)  # 0-100 for logarithmic scale
+        self.speed_slider.setValue(50)  # Default to 1.0
+        self.speed_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #999999;
+                height: 8px;
+                background: #666666;
+                margin: 2px 0;
+            }
+            QSlider::handle:horizontal {
+                background: #2196F3;
+                border: 1px solid #2196F3;
+                width: 18px;
+                margin: -2px 0;
+                border-radius: 3px;
+            }
+        """)
+        self.speed_slider.valueChanged.connect(self.speed_changed)
+        slider_layout.addWidget(self.speed_slider)
+        
+        self.speed_input = QLineEdit()
+        self.speed_input.setFixedWidth(80)
+        self.speed_input.setText("1.0")
+        self.speed_input.setReadOnly(True)
+        slider_layout.addWidget(self.speed_input)
+        
+        speed_layout.addLayout(slider_layout)
+        
+        # Speed buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(10)
+        
+        self.speed_confirm_btn = QPushButton("Confirm")
+        self.speed_cancel_btn = QPushButton("Cancel")
+        self.speed_confirm_btn.setFixedHeight(30)
+        self.speed_cancel_btn.setFixedHeight(30)
+        
+        self.speed_confirm_btn.clicked.connect(self.confirm_speed)
+        self.speed_cancel_btn.clicked.connect(self.cancel_speed)
+        
+        button_layout.addWidget(self.speed_confirm_btn)
+        button_layout.addWidget(self.speed_cancel_btn)
+        speed_layout.addLayout(button_layout)
+        
+        self.speed_control.hide()
+        default_layout.addWidget(self.speed_control)
         
         # Save control area
         save_controls = QHBoxLayout()
@@ -928,7 +1069,8 @@ class VideoPlayer(QMainWindow):
                 raise Exception("Failed to open video file")
                 
             self.input_file = file_path
-            self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.original_fps = self.cap.get(cv2.CAP_PROP_FPS)
+            self.fps = self.original_fps
             self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.time_slider.setMaximum(self.total_frames - 1)
             self.last_directory = os.path.dirname(file_path)
@@ -946,6 +1088,10 @@ class VideoPlayer(QMainWindow):
             self.segment_begin = 0
             self.segment_end = self.total_frames
             self.segment_widget.set_range(self.total_frames)
+            
+            # Reset speed
+            self.playback_speed = 1.0
+            self.fps = self.original_fps
             
             self.play_video()
         except Exception as e:
@@ -1066,7 +1212,36 @@ class VideoPlayer(QMainWindow):
         self.play_video()
         
     def show_speed_dialog(self):
-        QMessageBox.information(self, "Info", "Speed dialog will be implemented in the next step.")
+        if not self.cap:
+            QMessageBox.warning(self, "Warning", "Please load a video first!")
+            return
+            
+        # Hide save controls and show speed control
+        self.save_format.hide()
+        self.save_button.hide()
+        self.speed_control.show()
+        self.pause_video()
+        
+    def speed_changed(self, value):
+        # Convert linear slider value (0-100) to logarithmic speed (0.1-10.0)
+        # Using the formula: speed = 0.1 * (10^(value/50))
+        speed = 0.1 * (10 ** (value / 50))
+        self.speed_input.setText(f"{speed:.1f}")
+        
+    def confirm_speed(self):
+        speed = float(self.speed_input.text())
+        self.playback_speed = speed
+        self.fps = self.original_fps * speed
+        self.speed_control.hide()
+        self.save_format.show()
+        self.save_button.show()
+        self.play_video()
+        
+    def cancel_speed(self):
+        self.speed_control.hide()
+        self.save_format.show()
+        self.save_button.show()
+        self.play_video()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
