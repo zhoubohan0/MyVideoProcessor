@@ -448,6 +448,101 @@ class ClipWidget(QWidget):
         if self.parent:
             self.parent.cancel_clip()
 
+class ResizeWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.Window)  # Make it a window
+        self.parent = parent
+        self.setWindowTitle("Resize")
+        self.init_ui()
+        
+    def set_current_dimensions(self, width, height):
+        self.width_input.setValue(width)
+        self.height_input.setValue(height)
+        
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(5)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Size input area
+        size_layout = QHBoxLayout()
+        size_layout.setSpacing(5)
+        
+        # Width input
+        width_label = QLabel("Width:")
+        self.width_input = QSpinBox()
+        self.width_input.setRange(1, 9999)
+        self.width_input.setFixedWidth(80)
+        size_layout.addWidget(width_label)
+        size_layout.addWidget(self.width_input)
+        
+        # Height input
+        height_label = QLabel("Height:")
+        self.height_input = QSpinBox()
+        self.height_input.setRange(1, 9999)
+        self.height_input.setFixedWidth(80)
+        size_layout.addWidget(height_label)
+        size_layout.addWidget(self.height_input)
+        
+        layout.addLayout(size_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        button_layout.setSpacing(5)
+        
+        self.confirm_btn = QPushButton("Confirm")
+        self.cancel_btn = QPushButton("Cancel")
+        self.confirm_btn.setFixedHeight(25)
+        self.cancel_btn.setFixedHeight(25)
+        
+        self.confirm_btn.clicked.connect(self.confirm_resize)
+        self.cancel_btn.clicked.connect(self.cancel_resize)
+        
+        button_layout.addWidget(self.confirm_btn)
+        button_layout.addWidget(self.cancel_btn)
+        layout.addLayout(button_layout)
+        
+        # Set window size
+        self.setFixedSize(300, 80)
+        
+    def showEvent(self, event):
+        # Position the window to match parent window
+        if self.parent:
+            parent_geometry = self.parent.geometry()
+            x = parent_geometry.x() + (parent_geometry.width() - self.width()) // 2
+            y = parent_geometry.y() + (parent_geometry.height() - self.height()) // 2
+            self.move(x, y)
+        super().showEvent(event)
+        
+    def confirm_resize(self):
+        if self.parent:
+            width = self.width_input.value()
+            height = self.height_input.value()
+            self.parent.confirm_resize(width, height)
+            
+    def cancel_resize(self):
+        if self.parent:
+            self.parent.cancel_resize()
+
+    def show_resize_dialog(self):
+        if not self.cap:
+            QMessageBox.warning(self, "Warning", "Please load a video first!")
+            return
+            
+        # Create resize widget if not exists
+        if self.resize_widget is None:
+            self.resize_widget = ResizeWidget(self)
+            
+        # Set dimensions - use last resize dimensions if available, otherwise use current frame dimensions
+        if self.last_resize_dimensions is not None:
+            self.resize_widget.set_current_dimensions(*self.last_resize_dimensions)
+        elif self.current_frame is not None:
+            h, w = self.current_frame.shape[:2]
+            self.resize_widget.set_current_dimensions(w, h)
+            
+        self.resize_widget.show()
+        self.pause_video()
+
 class VideoPlayer(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -468,6 +563,9 @@ class VideoPlayer(QMainWindow):
         self.is_processing = False
         self.clip_rect = None  # Crop area
         self.clip_widget = None  # Will be created when needed
+        self.resize_widget = None  # Will be created when needed
+        self.resize_dimensions = None  # (width, height)
+        self.last_resize_dimensions = None  # Store last resize dimensions
         
         # Create UI
         self.init_ui()
@@ -702,6 +800,10 @@ class VideoPlayer(QMainWindow):
                 x1, y1, x2, y2 = self.clip_rect
                 width = x2 - x1
                 height = y2 - y1
+                
+            # Apply resize if exists
+            if self.resize_dimensions:
+                width, height = self.resize_dimensions
             
             # Create video writer
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -721,6 +823,12 @@ class VideoPlayer(QMainWindow):
                     if self.clip_rect:
                         x1, y1, x2, y2 = self.clip_rect
                         frame = frame[y1:y2, x1:x2]
+                        
+                    # Apply resize if exists
+                    if self.resize_dimensions:
+                        width, height = self.resize_dimensions
+                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+                        
                     out.write(frame)
                 else:
                     break
@@ -739,6 +847,11 @@ class VideoPlayer(QMainWindow):
         if self.clip_rect:
             x1, y1, x2, y2 = self.clip_rect
             frame = frame[y1:y2, x1:x2]
+            
+        # Apply resize
+        if self.resize_dimensions:
+            width, height = self.resize_dimensions
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
             
         # Convert color space from BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -922,7 +1035,35 @@ class VideoPlayer(QMainWindow):
         self.play_video()
         
     def show_resize_dialog(self):
-        QMessageBox.information(self, "Info", "Resize dialog will be implemented in the next step.")
+        if not self.cap:
+            QMessageBox.warning(self, "Warning", "Please load a video first!")
+            return
+            
+        # Create resize widget if not exists
+        if self.resize_widget is None:
+            self.resize_widget = ResizeWidget(self)
+            
+        # Set dimensions - use last resize dimensions if available, otherwise use current frame dimensions
+        if self.last_resize_dimensions is not None:
+            self.resize_widget.set_current_dimensions(*self.last_resize_dimensions)
+        elif self.current_frame is not None:
+            h, w = self.current_frame.shape[:2]
+            self.resize_widget.set_current_dimensions(w, h)
+            
+        self.resize_widget.show()
+        self.pause_video()
+        
+    def confirm_resize(self, width, height):
+        self.resize_dimensions = (width, height)
+        self.last_resize_dimensions = (width, height)  # Save the dimensions
+        if self.resize_widget:
+            self.resize_widget.close()
+        self.play_video()
+        
+    def cancel_resize(self):
+        if self.resize_widget:
+            self.resize_widget.close()
+        self.play_video()
         
     def show_speed_dialog(self):
         QMessageBox.information(self, "Info", "Speed dialog will be implemented in the next step.")
