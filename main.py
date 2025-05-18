@@ -912,13 +912,16 @@ class VideoPlayer(QMainWindow):
         try:
             self.is_processing = True
             format = self.save_format.currentText()
-            base_path = os.path.splitext(self.input_file)[0] + '_frames'
+            
+            # Use os.path.join for cross-platform path construction
+            base_path = os.path.join(os.path.dirname(self.input_file), 
+                                    os.path.splitext(os.path.basename(self.input_file))[0] + '_frames')
             os.makedirs(base_path, exist_ok=True)
             
             if format in ['.jpg', '.png']:
                 # Save single frame
                 save_path = os.path.join(base_path, f"{self.current_frame_number:06d}{format}")
-                cv2.imencode(format, self.current_frame)[1].tofile(save_path)
+                cv2.imwrite(save_path, self.current_frame)
             else:
                 save_path = os.path.join(base_path, f"{self.segment_begin:06d}-{self.segment_end:06d}{format}")
                 self.save_video_segment(save_path)
@@ -946,8 +949,15 @@ class VideoPlayer(QMainWindow):
             if self.resize_dimensions:
                 width, height = self.resize_dimensions
             
+            # Choose codec based on platform
+            if sys.platform == 'darwin':  # macOS
+                fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264 codec
+            elif sys.platform == 'linux':  # Linux
+                fourcc = cv2.VideoWriter_fourcc(*'XVID')  # XVID codec
+            else:  # Windows
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            
             # Create video writer
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
             out = cv2.VideoWriter(save_path, fourcc, self.fps, (width, height))
             
             if not out.isOpened():
