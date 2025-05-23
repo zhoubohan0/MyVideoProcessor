@@ -786,7 +786,7 @@ class VideoPlayer(QMainWindow):
         
         # Save format selection
         self.save_format = QComboBox()
-        self.save_format.addItems([".mp4", ".avi", ".mkv", ".jpg", ".png"])
+        self.save_format.addItems([".mp4", ".avi", ".jpg", ".png", "*.jpg", "*.png"])
         self.save_format.setFixedHeight(40)
         self.save_format.setEnabled(False)  # Initially disabled
         save_controls.addWidget(self.save_format)
@@ -918,16 +918,58 @@ class VideoPlayer(QMainWindow):
                                     os.path.splitext(os.path.basename(self.input_file))[0] + '_frames')
             os.makedirs(base_path, exist_ok=True)
             
-            if format in ['.jpg', '.png']:
+            if format == '.jpg' or format == '.png':
                 # Save single frame
                 save_path = os.path.join(base_path, f"{self.current_frame_number:06d}{format}")
-                cv2.imwrite(save_path, self.current_frame)
+                # Use imencode instead of imwrite
+                _, buffer = cv2.imencode(format, self.current_frame)
+                with open(save_path, 'wb') as f:
+                    f.write(buffer)
+                print(f"Saved to {save_path}")
+                QMessageBox.information(self, "Success", f"Saved to {save_path}")
+            elif format == '*.jpg' or format == '*.png':
+                # Save all frames in the segment
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.segment_begin)
+                frame_count = self.segment_begin
+                total_frames = self.segment_end - self.segment_begin
+                
+                while frame_count < self.segment_end:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        break
+                        
+                    # Apply crop if exists
+                    if self.clip_rect:
+                        x1, y1, x2, y2 = self.clip_rect
+                        frame = frame[y1:y2, x1:x2]
+                        
+                    # Apply resize if exists
+                    if self.resize_dimensions:
+                        width, height = self.resize_dimensions
+                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+                    
+                    # Save frame using imencode
+                    save_path = os.path.join(base_path, f"{frame_count:06d}{format[1:]}")
+                    _, buffer = cv2.imencode(format[1:], frame)
+                    with open(save_path, 'wb') as f:
+                        f.write(buffer)
+                    frame_count += 1
+                    
+                    # Update progress
+                    progress = (frame_count - self.segment_begin) / total_frames * 100
+                    print(f"\rSaving frames: {progress:.1f}%", end="")
+                    
+                print("\nDone!")
+                print(f"Saved to {base_path}")
+                QMessageBox.information(self, "Success", f"Saved to {base_path}")
             else:
                 save_path = os.path.join(base_path, f"{self.segment_begin:06d}-{self.segment_end:06d}{format}")
-                self.save_video_segment(save_path)
-                
-            print(f"Saved to {save_path}")
-            QMessageBox.information(self, "Success", f"Saved to {save_path}")
+                # Use absolute path
+                abs_save_path = os.path.abspath(save_path)
+                os.makedirs(os.path.dirname(abs_save_path), exist_ok=True)
+                self.save_video_segment(abs_save_path)
+                print(f"Saved to {save_path}")
+                QMessageBox.information(self, "Success", f"Saved to {save_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Save failed: {str(e)}")
         finally:
@@ -1052,7 +1094,7 @@ class VideoPlayer(QMainWindow):
             self,
             "Open Video File",
             self.last_directory,
-            "Video Files (*.mp4 *.avi *.mkv *.mov);;All Files (*.*)"
+            "Video Files (*.mp4 *.avi *.mov);;All Files (*.*)"
         )
         if file_path:
             self.load_video(file_path)
@@ -1066,7 +1108,7 @@ class VideoPlayer(QMainWindow):
             QMessageBox.critical(self, "Error", "File does not exist!")
             return
             
-        if not file_path.lower().endswith(('.mp4', '.avi', '.mkv', '.mov')):
+        if not file_path.lower().endswith(('.mp4', '.avi', '.mov')):
             QMessageBox.warning(self, "Warning", "Unsupported file format!")
             return
             
